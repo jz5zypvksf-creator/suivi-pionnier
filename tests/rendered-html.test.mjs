@@ -32,6 +32,8 @@ test("keeps the agreed tracking targets and local storage", async () => {
   assert.match(page, /serviceWorker/);
   assert.match(page, /Activer la synchronisation/);
   assert.match(page, /Recevoir le lien de connexion/);
+  assert.match(page, /Trop de liens ont été demandés/);
+  assert.match(page, /Nouvel envoi dans/);
   assert.match(page, /pushCloudSnapshot/);
   assert.match(page, /https:\/\/suivi-pionnier\.vercel\.app\//);
   assert.match(page, /category: "Cours biblique", hours: "2,5"/);

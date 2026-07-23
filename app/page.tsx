@@ -70,6 +70,8 @@ export default function Home() {
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [authEmail, setAuthEmail] = useState("");
   const [authMessage, setAuthMessage] = useState("");
+  const [authSending, setAuthSending] = useState(false);
+  const [authCooldown, setAuthCooldown] = useState(0);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("local");
   const [cloudReady, setCloudReady] = useState(false);
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -216,13 +218,25 @@ export default function Home() {
   const sendMagicLink = async (event: FormEvent) => {
     event.preventDefault();
     const email = authEmail.trim();
-    if (!email) return;
+    if (!email || authSending || authCooldown > 0) return;
+    setAuthSending(true);
     setAuthMessage("Envoi du lien de connexion…");
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: { emailRedirectTo: PRODUCTION_URL },
     });
-    setAuthMessage(error ? `Connexion impossible : ${error.message}` : "Un lien de connexion vous a été envoyé par e-mail.");
+    setAuthSending(false);
+    setAuthCooldown(60);
+    if (!error) {
+      setAuthMessage("Un lien de connexion vous a été envoyé. Consultez votre boîte e-mail et ouvrez uniquement le message le plus récent.");
+      return;
+    }
+    const rateLimited = error.code === "over_email_send_rate_limit"
+      || error.status === 429
+      || /rate limit|too many/i.test(error.message);
+    setAuthMessage(rateLimited
+      ? "Trop de liens ont été demandés. N’appuyez plus sur le bouton, attendez environ une heure, puis faites une seule nouvelle demande."
+      : "Le lien n’a pas pu être envoyé pour le moment. Vérifiez l’adresse e-mail et réessayez dans quelques minutes.");
   };
 
   const signOut = async () => {
@@ -280,6 +294,12 @@ export default function Home() {
   useEffect(() => {
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (authCooldown <= 0) return;
+    const timer = window.setTimeout(() => setAuthCooldown((seconds) => Math.max(seconds - 1, 0)), 1000);
+    return () => window.clearTimeout(timer);
+  }, [authCooldown]);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setAuthUser(data.user));
@@ -685,7 +705,9 @@ export default function Home() {
               <label>Adresse e-mail
                 <input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="votre@email.be" autoComplete="email" required />
               </label>
-              <button className="primary" type="submit">Recevoir le lien de connexion</button>
+              <button className="primary" type="submit" disabled={authSending || authCooldown > 0}>
+                {authSending ? "Envoi en cours…" : authCooldown > 0 ? `Nouvel envoi dans ${authCooldown} s` : "Recevoir le lien de connexion"}
+              </button>
             </form>
           </>}
           {authMessage && <p className="auth-message" role="status">{authMessage}</p>}
