@@ -583,7 +583,9 @@ export default function Home() {
               </div>
               <div className="thin-progress"><i style={{ width: `${weekProgress}%` }} /></div>
             </>}
-            <p className="fixed-note">Vos deux cours du week-end représentent une base fixe de 5 h.</p>
+            {students.length > 0 && <p className="fixed-note">
+              {students.length === 1 ? "Votre cours biblique actif représente" : `Vos ${students.length} cours bibliques actifs représentent`} environ {formatHours(students.length * 1.5)} par semaine (1 h 30 par cours).
+            </p>}
 
             <h2 className="quick-title">Ajouter rapidement</h2>
             <div className="quick-grid">
