@@ -16,6 +16,11 @@ test("keeps the agreed tracking targets and local storage", async () => {
   assert.match(page, /Pionnier permanent/);
   assert.match(page, /Pionnier auxiliaire/);
   assert.match(page, /Mois auxiliaire/);
+  assert.match(page, /"LDC"/);
+  assert.match(page, /"Béthel"/);
+  assert.match(page, /Ministère \(avec cours bibliques\)/);
+  assert.match(page, /Activité affichée/);
+  assert.match(page, /Couleurs des activités/);
   assert.match(page, /selectedAuxMonth/);
   assert.match(page, /serviceYearLabel/);
   assert.match(page, /STUDENTS_KEY/);

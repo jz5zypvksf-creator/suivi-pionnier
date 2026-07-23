@@ -4,12 +4,13 @@ import type { User } from "@supabase/supabase-js";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
-type Category = "Ministère" | "Cours biblique" | "Informel" | "Autre" | "Maison / jardin";
+type Category = "Ministère" | "Cours biblique" | "LDC" | "Béthel" | "Informel" | "Autre" | "Maison / jardin";
 type Entry = { id: string; date: string; category: Category; hours: number; note: string; student?: string };
 type View = "accueil" | "encoder" | "journal" | "progression";
 type PioneerType = "permanent" | "auxiliaire";
 type AuxiliaryTarget = 15 | 30;
 type ProgressSection = "heures" | "cours";
+type ProgressCategory = "total" | "ministry" | "bible" | "ldc" | "bethel";
 type SyncStatus = "local" | "syncing" | "synced" | "error";
 type CloudStudent = { id: string; name: string; archived: boolean };
 type CloudActivity = { id: string; activity_date: string; category: Category; hours: number; note: string; student_id: string | null };
@@ -22,7 +23,23 @@ const SETTINGS_KEY = "suivi-pionnier-settings-v1";
 const STUDENTS_KEY = "suivi-pionnier-students-v1";
 const ARCHIVED_STUDENTS_KEY = "suivi-pionnier-archived-students-v1";
 const PRODUCTION_URL = "https://suivi-pionnier.vercel.app/";
-const categories: Category[] = ["Ministère", "Cours biblique", "Informel", "Autre", "Maison / jardin"];
+const categories: Category[] = ["Ministère", "Cours biblique", "LDC", "Béthel", "Informel", "Autre", "Maison / jardin"];
+const progressCategories: { value: ProgressCategory; label: string; color: string }[] = [
+  { value: "total", label: "Total comptabilisé", color: "#176b55" },
+  { value: "ministry", label: "Ministère (avec cours bibliques)", color: "#238267" },
+  { value: "bible", label: "Cours biblique", color: "#3979b9" },
+  { value: "ldc", label: "LDC", color: "#d78b4b" },
+  { value: "bethel", label: "Béthel", color: "#8766a9" },
+];
+const categoryColors: Record<Category, string> = {
+  "Ministère": "#238267",
+  "Cours biblique": "#3979b9",
+  LDC: "#d78b4b",
+  Béthel: "#8766a9",
+  Informel: "#3b8f91",
+  Autre: "#71837e",
+  "Maison / jardin": "#a7602b",
+};
 const months = ["Sep", "Oct", "Nov", "Déc", "Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août"];
 const fullMonths = ["Septembre", "Octobre", "Novembre", "Décembre", "Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août"];
 
@@ -62,6 +79,7 @@ export default function Home() {
   const [students, setStudents] = useState<string[]>([]);
   const [archivedStudents, setArchivedStudents] = useState<string[]>([]);
   const [progressSection, setProgressSection] = useState<ProgressSection>("heures");
+  const [progressCategory, setProgressCategory] = useState<ProgressCategory>("total");
   const [selectedStudyStudent, setSelectedStudyStudent] = useState("");
   const [managingStudent, setManagingStudent] = useState<string | null>(null);
   const [studentNameDraft, setStudentNameDraft] = useState("");
@@ -356,6 +374,24 @@ export default function Home() {
     return { total, maintenance, weekly, monthly, currentMonth, yearEntries, studentCount };
   }, [entries, selectedYear, selectedAuxMonth, archivedStudents]);
 
+  const filteredProgress = useMemo(() => {
+    const selectedEntries = stats.yearEntries.filter((entry) => {
+      if (progressCategory === "total") return entry.category !== "Maison / jardin";
+      if (progressCategory === "ministry") return ["Ministère", "Cours biblique", "Informel", "Autre"].includes(entry.category);
+      if (progressCategory === "bible") return entry.category === "Cours biblique";
+      if (progressCategory === "ldc") return entry.category === "LDC";
+      return entry.category === "Béthel";
+    });
+    const monthly = Array.from({ length: 12 }, (_, index) =>
+      selectedEntries.filter((entry) => serviceMonthIndex(entry.date) === index).reduce((sum, entry) => sum + entry.hours, 0),
+    );
+    return {
+      total: selectedEntries.reduce((sum, entry) => sum + entry.hours, 0),
+      monthly,
+      currentMonth: monthly[selectedAuxMonth],
+    };
+  }, [stats.yearEntries, progressCategory, selectedAuxMonth]);
+
   const addEntry = (category: Category, hours: number, note = "") => {
     setSelectedYear(serviceYearStart(new Date()));
     if (pioneerType === "auxiliaire") setSelectedAuxMonth(serviceMonthIndex(today()));
@@ -461,7 +497,11 @@ export default function Home() {
   const activeTarget = pioneerType === "permanent" ? YEAR_TARGET : auxiliaryTarget;
   const progress = Math.min((trackedTotal / activeTarget) * 100, 100);
   const weekProgress = Math.min((stats.weekly / WEEK_TARGET) * 100, 100);
-  const maxMonth = Math.max(...stats.monthly, 50);
+  const progressCategoryDetails = progressCategories.find((category) => category.value === progressCategory) ?? progressCategories[0];
+  const progressMaxMonth = Math.max(...filteredProgress.monthly, 1);
+  const selectedPeriodTotal = pioneerType === "permanent" ? filteredProgress.total : filteredProgress.currentMonth;
+  const overallPeriodTotal = pioneerType === "permanent" ? stats.total : stats.currentMonth;
+  const selectedShare = overallPeriodTotal > 0 ? (selectedPeriodTotal / overallPeriodTotal) * 100 : 0;
   const courseStudents = Array.from(new Set(stats.yearEntries.filter((entry) => entry.category === "Cours biblique" && entry.student && !archivedStudents.includes(entry.student)).map((entry) => entry.student!))).sort((a, b) => a.localeCompare(b, "fr"));
   const activeStudyStudent = courseStudents.includes(selectedStudyStudent) ? selectedStudyStudent : (courseStudents[0] ?? "");
   const studentCourses = stats.yearEntries
@@ -611,23 +651,35 @@ export default function Home() {
             </div>
 
             {progressSection === "heures" ? <>
+              <label className="progress-filter">Activité affichée
+                <select value={progressCategory} onChange={(event) => setProgressCategory(event.target.value as ProgressCategory)}>
+                  {progressCategories.map((category) => <option key={category.value} value={category.value}>{category.label}</option>)}
+                </select>
+              </label>
+              <div className="activity-legend" aria-label="Couleurs des activités">
+                {progressCategories.slice(1).map((category) => <span key={category.value}><i style={{ background: category.color }} />{category.label.replace(" (avec cours bibliques)", "")}</span>)}
+              </div>
               <div className="summary-grid">
-                {pioneerType === "permanent" ? <>
-                  <div><small>Année</small><b>{formatHours(stats.total)}</b></div>
-                  <div><small>Reste</small><b>{formatHours(Math.max(YEAR_TARGET - stats.total, 0))}</b></div>
-                  <div><small>Moyenne/mois</small><b>{formatHours(stats.total / 12)}</b></div>
-                </> : <>
-                  <div><small>Mois affiché</small><b>{months[selectedAuxMonth]}</b></div>
-                  <div><small>Réalisé</small><b>{formatHours(stats.currentMonth)}</b></div>
-                  <div><small>Objectif</small><b>{auxiliaryTarget} h</b></div>
-                </>}
+                {progressCategory === "total" ? pioneerType === "permanent" ? <>
+                    <div><small>Année</small><b>{formatHours(stats.total)}</b></div>
+                    <div><small>Reste</small><b>{formatHours(Math.max(YEAR_TARGET - stats.total, 0))}</b></div>
+                    <div><small>Moyenne/mois</small><b>{formatHours(stats.total / 12)}</b></div>
+                  </> : <>
+                    <div><small>Mois affiché</small><b>{months[selectedAuxMonth]}</b></div>
+                    <div><small>Réalisé</small><b>{formatHours(stats.currentMonth)}</b></div>
+                    <div><small>Objectif</small><b>{auxiliaryTarget} h</b></div>
+                  </> : <>
+                    <div><small>Activité</small><b style={{ color: progressCategoryDetails.color }}>{progressCategoryDetails.label.replace(" (avec cours bibliques)", "")}</b></div>
+                    <div><small>{pioneerType === "permanent" ? "Total annuel" : months[selectedAuxMonth]}</small><b>{formatHours(selectedPeriodTotal)}</b></div>
+                    <div><small>Part du total</small><b>{Math.round(selectedShare)} %</b></div>
+                  </>}
                 <div><small>Étudiants</small><b>{stats.studentCount}</b></div>
               </div>
-              <div className="chart" aria-label="Heures de ministère par mois">
-                {stats.monthly.map((value, i) => <div className="bar-col" key={months[i]}><span>{value || ""}</span><i style={{ height: `${Math.max((value / maxMonth) * 180, value ? 8 : 2)}px` }} /><small>{months[i]}</small></div>)}
+              <div className="chart" aria-label={`${progressCategoryDetails.label} par mois`}>
+                {filteredProgress.monthly.map((value, i) => <div className="bar-col" key={months[i]}><span>{value || ""}</span><i style={{ height: `${Math.max((value / progressMaxMonth) * 180, value ? 8 : 2)}px`, background: progressCategoryDetails.color }} /><small>{months[i]}</small></div>)}
               </div>
               <div className="month-list">
-                {months.map((month, i) => <div key={month}><span>{month}</span><i><em style={{ width: `${Math.min((stats.monthly[i] / (pioneerType === "permanent" ? 50 : auxiliaryTarget)) * 100, 100)}%` }} /></i><b>{formatHours(stats.monthly[i])}</b></div>)}
+                {months.map((month, i) => <div key={month}><span>{month}</span><i><em style={{ width: `${Math.min((filteredProgress.monthly[i] / progressMaxMonth) * 100, 100)}%`, background: progressCategoryDetails.color }} /></i><b>{formatHours(filteredProgress.monthly[i])}</b></div>)}
               </div>
             </> : courseStudents.length ? <>
               <div className="study-picker-row">
@@ -755,7 +807,7 @@ function EntryList({ entries, onDelete, empty }: { entries: Entry[]; onDelete: (
   if (!entries.length) return <div className="empty">{empty}</div>;
   return <div className="entry-list">{entries.map((entry) => (
     <article key={entry.id}>
-      <div className={`entry-icon ${entry.category === "Maison / jardin" ? "home" : ""}`}>{entry.category === "Cours biblique" ? "▤" : entry.category === "Maison / jardin" ? "⌂" : "○"}</div>
+      <div className="entry-icon" style={{ color: categoryColors[entry.category], background: `${categoryColors[entry.category]}20` }}>{entry.category === "Cours biblique" ? "▤" : entry.category === "Maison / jardin" ? "⌂" : "○"}</div>
       <div><h3>{entry.category}{entry.student ? ` · ${entry.student}` : ""}</h3><p>{new Date(`${entry.date}T12:00:00`).toLocaleDateString("fr-BE", { weekday: "short", day: "numeric", month: "short" })}{entry.note ? ` · ${entry.note}` : ""}</p></div>
       <b>{formatHours(entry.hours)}</b>
       <button className="delete" aria-label={`Supprimer ${entry.category}`} onClick={() => onDelete(entry.id)}>×</button>
