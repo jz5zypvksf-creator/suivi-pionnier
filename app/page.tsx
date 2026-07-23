@@ -15,6 +15,7 @@ const SETTINGS_KEY = "suivi-pionnier-settings-v1";
 const STUDENTS_KEY = "suivi-pionnier-students-v1";
 const categories: Category[] = ["Ministère", "Cours biblique", "Informel", "Autre", "Maison / jardin"];
 const months = ["Sep", "Oct", "Nov", "Déc", "Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août"];
+const fullMonths = ["Septembre", "Octobre", "Novembre", "Décembre", "Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août"];
 
 const today = () => new Date().toISOString().slice(0, 10);
 const serviceYearStart = (date: string | Date) => {
@@ -26,6 +27,7 @@ const serviceYears = (() => {
   return Array.from({ length: 5 }, (_, i) => current - 1 + i);
 })();
 const serviceYearLabel = (start: number) => `${start}–${start + 1}`;
+const serviceMonthLabel = (start: number, index: number) => `${fullMonths[index]} ${index < 4 ? start : start + 1}`;
 const serviceMonthIndex = (date: string) => {
   const d = new Date(`${date}T12:00:00`);
   return (d.getMonth() + 4) % 12;
@@ -46,6 +48,7 @@ export default function Home() {
   const [notice, setNotice] = useState("");
   const [selectedYear, setSelectedYear] = useState(serviceYearStart(new Date()));
   const [pioneerType, setPioneerType] = useState<PioneerType>("permanent");
+  const [selectedAuxMonth, setSelectedAuxMonth] = useState(serviceMonthIndex(today()));
   const [students, setStudents] = useState<string[]>([]);
   const [form, setForm] = useState({ date: today(), category: "Ministère" as Category, hours: "2", note: "", student: "", newStudent: "" });
 
@@ -67,6 +70,7 @@ export default function Home() {
         const settings = JSON.parse(savedSettings);
         if (typeof settings.selectedYear === "number") setSelectedYear(settings.selectedYear);
         if (settings.pioneerType === "permanent" || settings.pioneerType === "auxiliaire") setPioneerType(settings.pioneerType);
+        if (Number.isInteger(settings.selectedAuxMonth) && settings.selectedAuxMonth >= 0 && settings.selectedAuxMonth < 12) setSelectedAuxMonth(settings.selectedAuxMonth);
       }
     } finally {
       setReady(true);
@@ -78,8 +82,8 @@ export default function Home() {
   }, [entries, ready]);
 
   useEffect(() => {
-    if (ready) localStorage.setItem(SETTINGS_KEY, JSON.stringify({ selectedYear, pioneerType }));
-  }, [selectedYear, pioneerType, ready]);
+    if (ready) localStorage.setItem(SETTINGS_KEY, JSON.stringify({ selectedYear, pioneerType, selectedAuxMonth }));
+  }, [selectedYear, pioneerType, selectedAuxMonth, ready]);
 
   useEffect(() => {
     if (ready) localStorage.setItem(STUDENTS_KEY, JSON.stringify(students));
@@ -99,14 +103,14 @@ export default function Home() {
     const monthly = Array.from({ length: 12 }, (_, i) =>
       ministry.filter((e) => serviceMonthIndex(e.date) === i).reduce((sum, e) => sum + e.hours, 0)
     );
-    const todayIndex = serviceMonthIndex(today());
-    const currentMonth = monthly[todayIndex];
+    const currentMonth = monthly[selectedAuxMonth];
     const studentCount = new Set(yearEntries.filter((e) => e.category === "Cours biblique" && e.student).map((e) => e.student)).size;
-    return { total, maintenance, weekly, monthly, currentMonth, todayIndex, yearEntries, studentCount };
-  }, [entries, selectedYear]);
+    return { total, maintenance, weekly, monthly, currentMonth, yearEntries, studentCount };
+  }, [entries, selectedYear, selectedAuxMonth]);
 
   const addEntry = (category: Category, hours: number, note = "") => {
     setSelectedYear(serviceYearStart(new Date()));
+    if (pioneerType === "auxiliaire") setSelectedAuxMonth(serviceMonthIndex(today()));
     setEntries((current) => [{ id: crypto.randomUUID(), date: today(), category, hours, note }, ...current]);
     setNotice(`${formatHours(hours)} ajoutées — ${category}`);
     window.setTimeout(() => setNotice(""), 2500);
@@ -127,6 +131,7 @@ export default function Home() {
     }
     setEntries((current) => [{ id: crypto.randomUUID(), date: form.date, category: form.category, hours, note: form.note.trim(), student }, ...current]);
     setSelectedYear(serviceYearStart(form.date));
+    if (pioneerType === "auxiliaire") setSelectedAuxMonth(serviceMonthIndex(form.date));
     setForm((current) => ({ ...current, hours: "", note: "", newStudent: "", student: student ?? "" }));
     setNotice("Activité enregistrée");
     setView("journal");
@@ -149,7 +154,7 @@ export default function Home() {
     <main className="app-shell">
       <header className="topbar">
         <div className="brand-mark">SP</div>
-        <div className="service-controls">
+        <div className={`service-controls ${pioneerType === "auxiliaire" ? "auxiliary" : ""}`}>
           <label>
             <span>Année de service</span>
             <select value={selectedYear} onChange={(e) => setSelectedYear(Number(e.target.value))} aria-label="Année de service">
@@ -163,6 +168,12 @@ export default function Home() {
               <option value="auxiliaire">Pionnier auxiliaire</option>
             </select>
           </label>
+          {pioneerType === "auxiliaire" && <label>
+            <span>Mois auxiliaire</span>
+            <select value={selectedAuxMonth} onChange={(e) => setSelectedAuxMonth(Number(e.target.value))} aria-label="Mois du service auxiliaire">
+              {fullMonths.map((_, index) => <option key={index} value={index}>{serviceMonthLabel(selectedYear, index)}</option>)}
+            </select>
+          </label>}
         </div>
         <div className="year-pill">{pioneerType === "permanent" ? "600 h" : "30 h/mois"}</div>
       </header>
@@ -174,7 +185,7 @@ export default function Home() {
           <>
             <section className="hero-card">
               <div className="hero-copy">
-                <p className="eyebrow light">{pioneerType === "permanent" ? "Progression annuelle" : `Progression · ${months[stats.todayIndex]}`}</p>
+                <p className="eyebrow light">{pioneerType === "permanent" ? "Progression annuelle" : `Progression · ${fullMonths[selectedAuxMonth]}`}</p>
                 <strong>{formatHours(trackedTotal)}</strong>
                 <span>sur {activeTarget} h</span>
               </div>
@@ -258,7 +269,7 @@ export default function Home() {
                 <div><small>Reste</small><b>{formatHours(Math.max(YEAR_TARGET - stats.total, 0))}</b></div>
                 <div><small>Moyenne/mois</small><b>{formatHours(stats.total / 12)}</b></div>
               </> : <>
-                <div><small>Mois affiché</small><b>{months[stats.todayIndex]}</b></div>
+                <div><small>Mois affiché</small><b>{months[selectedAuxMonth]}</b></div>
                 <div><small>Réalisé</small><b>{formatHours(stats.currentMonth)}</b></div>
                 <div><small>Objectif</small><b>{MONTH_TARGET} h</b></div>
               </>}

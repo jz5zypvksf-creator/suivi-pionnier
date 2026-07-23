@@ -12,6 +12,8 @@ test("keeps the agreed tracking targets and local storage", async () => {
   assert.match(page, /MONTH_TARGET = 30/);
   assert.match(page, /Pionnier permanent/);
   assert.match(page, /Pionnier auxiliaire/);
+  assert.match(page, /Mois auxiliaire/);
+  assert.match(page, /selectedAuxMonth/);
   assert.match(page, /serviceYearLabel/);
   assert.match(page, /STUDENTS_KEY/);
   assert.match(page, /Ajouter un nouvel étudiant/);
