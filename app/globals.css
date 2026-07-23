@@ -17,6 +17,8 @@ button { cursor:pointer; }
 .service-controls select:focus { box-shadow:0 0 0 2px #176b5525; }
 .eyebrow { color:var(--green); font-size:10px; font-weight:800; letter-spacing:.14em; text-transform:uppercase; margin:0; }
 .year-pill { padding:8px 10px; border-radius:99px; background:var(--mint); color:var(--green); font-size:12px; font-weight:800; white-space:nowrap; }
+.target-select { appearance:none; border:0; outline:none; cursor:pointer; text-align:center; }
+.target-select:focus { box-shadow:0 0 0 2px #176b5530; }
 .sync-strip{width:calc(100% - 36px);display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;margin:0 18px 9px;border:1px solid #dce5e0;border-radius:13px;padding:9px 11px;background:white;color:var(--ink);text-align:left}.sync-cloud{display:grid;place-items:center;width:30px;height:30px;border-radius:10px;background:#edf2ef;color:#7f908a;font-size:16px}.sync-strip>span:nth-child(2){min-width:0}.sync-strip b,.sync-strip small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sync-strip b{font-size:10px}.sync-strip small{margin-top:2px;color:var(--muted);font-size:8px}.sync-arrow{color:#879792;font-size:20px}.sync-strip.synced .sync-cloud{background:var(--mint);color:var(--green)}.sync-strip.syncing .sync-cloud{background:#fff0dc;color:#9c632d}.sync-strip.error .sync-cloud{background:#fff0ed;color:#a64c41}
 .content { padding:8px 18px 30px; }
 .hero-card { color:white; padding:25px; border-radius:25px; background:linear-gradient(145deg,#1d735d,#115342); position:relative; overflow:hidden; display:grid; grid-template-columns:1fr auto; align-items:center; box-shadow:0 18px 35px #155c4730; }

@@ -8,6 +8,7 @@ type Category = "Ministère" | "Cours biblique" | "Informel" | "Autre" | "Maison
 type Entry = { id: string; date: string; category: Category; hours: number; note: string; student?: string };
 type View = "accueil" | "encoder" | "journal" | "progression";
 type PioneerType = "permanent" | "auxiliaire";
+type AuxiliaryTarget = 15 | 30;
 type ProgressSection = "heures" | "cours";
 type SyncStatus = "local" | "syncing" | "synced" | "error";
 type CloudStudent = { id: string; name: string; archived: boolean };
@@ -15,7 +16,7 @@ type CloudActivity = { id: string; activity_date: string; category: Category; ho
 
 const YEAR_TARGET = 600;
 const WEEK_TARGET = 13;
-const MONTH_TARGET = 30;
+const DEFAULT_AUXILIARY_TARGET: AuxiliaryTarget = 30;
 const STORAGE_KEY = "suivi-pionnier-entries-v1";
 const SETTINGS_KEY = "suivi-pionnier-settings-v1";
 const STUDENTS_KEY = "suivi-pionnier-students-v1";
@@ -57,6 +58,7 @@ export default function Home() {
   const [selectedYear, setSelectedYear] = useState(serviceYearStart(new Date()));
   const [pioneerType, setPioneerType] = useState<PioneerType>("permanent");
   const [selectedAuxMonth, setSelectedAuxMonth] = useState(serviceMonthIndex(today()));
+  const [auxiliaryTarget, setAuxiliaryTarget] = useState<AuxiliaryTarget>(DEFAULT_AUXILIARY_TARGET);
   const [students, setStudents] = useState<string[]>([]);
   const [archivedStudents, setArchivedStudents] = useState<string[]>([]);
   const [progressSection, setProgressSection] = useState<ProgressSection>("heures");
@@ -78,7 +80,7 @@ export default function Home() {
     snapshotEntries = entries,
     snapshotStudents = students,
     snapshotArchived = archivedStudents,
-    snapshotSettings = { selectedYear, pioneerType, selectedAuxMonth },
+    snapshotSettings = { selectedYear, pioneerType, selectedAuxMonth, auxiliaryTarget },
   ) => {
     const desiredNames = Array.from(new Set([
       ...snapshotStudents,
@@ -148,6 +150,7 @@ export default function Home() {
       pioneer_type: snapshotSettings.pioneerType,
       selected_year: snapshotSettings.selectedYear,
       selected_aux_month: snapshotSettings.selectedAuxMonth,
+      auxiliary_target: snapshotSettings.auxiliaryTarget,
     });
     if (settingsError) throw settingsError;
   };
@@ -159,7 +162,7 @@ export default function Home() {
       const [studentResult, activityResult, settingsResult] = await Promise.all([
         supabase.from("students").select("id,name,archived").eq("user_id", user.id),
         supabase.from("activities").select("id,activity_date,category,hours,note,student_id").eq("user_id", user.id),
-        supabase.from("pioneer_settings").select("pioneer_type,selected_year,selected_aux_month").eq("user_id", user.id).maybeSingle(),
+        supabase.from("pioneer_settings").select("pioneer_type,selected_year,selected_aux_month,auxiliary_target").eq("user_id", user.id).maybeSingle(),
       ]);
       if (studentResult.error) throw studentResult.error;
       if (activityResult.error) throw activityResult.error;
@@ -190,7 +193,8 @@ export default function Home() {
         selectedYear: remoteSettings.selected_year,
         pioneerType: remoteSettings.pioneer_type as PioneerType,
         selectedAuxMonth: remoteSettings.selected_aux_month,
-      } : { selectedYear, pioneerType, selectedAuxMonth };
+        auxiliaryTarget: (remoteSettings.auxiliary_target === 15 ? 15 : 30) as AuxiliaryTarget,
+      } : { selectedYear, pioneerType, selectedAuxMonth, auxiliaryTarget };
 
       setEntries(mergedEntries);
       setStudents(mergedActive);
@@ -198,6 +202,7 @@ export default function Home() {
       setSelectedYear(effectiveSettings.selectedYear);
       setPioneerType(effectiveSettings.pioneerType);
       setSelectedAuxMonth(effectiveSettings.selectedAuxMonth);
+      setAuxiliaryTarget(effectiveSettings.auxiliaryTarget);
       await pushCloudSnapshot(user.id, mergedEntries, mergedActive, mergedArchived, effectiveSettings);
       setCloudReady(true);
       setSyncStatus("synced");
@@ -249,6 +254,7 @@ export default function Home() {
         if (typeof settings.selectedYear === "number") setSelectedYear(settings.selectedYear);
         if (settings.pioneerType === "permanent" || settings.pioneerType === "auxiliaire") setPioneerType(settings.pioneerType);
         if (Number.isInteger(settings.selectedAuxMonth) && settings.selectedAuxMonth >= 0 && settings.selectedAuxMonth < 12) setSelectedAuxMonth(settings.selectedAuxMonth);
+        if (settings.auxiliaryTarget === 15 || settings.auxiliaryTarget === 30) setAuxiliaryTarget(settings.auxiliaryTarget);
       }
     } finally {
       setReady(true);
@@ -260,8 +266,8 @@ export default function Home() {
   }, [entries, ready]);
 
   useEffect(() => {
-    if (ready) localStorage.setItem(SETTINGS_KEY, JSON.stringify({ selectedYear, pioneerType, selectedAuxMonth }));
-  }, [selectedYear, pioneerType, selectedAuxMonth, ready]);
+    if (ready) localStorage.setItem(SETTINGS_KEY, JSON.stringify({ selectedYear, pioneerType, selectedAuxMonth, auxiliaryTarget }));
+  }, [selectedYear, pioneerType, selectedAuxMonth, auxiliaryTarget, ready]);
 
   useEffect(() => {
     if (ready) localStorage.setItem(STUDENTS_KEY, JSON.stringify(students));
@@ -309,7 +315,7 @@ export default function Home() {
     };
     // Les données listées constituent l'instantané à envoyer.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries, students, archivedStudents, selectedYear, pioneerType, selectedAuxMonth, authUser?.id, cloudReady]);
+  }, [entries, students, archivedStudents, selectedYear, pioneerType, selectedAuxMonth, auxiliaryTarget, authUser?.id, cloudReady]);
 
   const stats = useMemo(() => {
     const yearEntries = entries.filter((e) => serviceYearStart(e.date) === selectedYear);
@@ -410,7 +416,7 @@ export default function Home() {
   };
 
   const trackedTotal = pioneerType === "permanent" ? stats.total : stats.currentMonth;
-  const activeTarget = pioneerType === "permanent" ? YEAR_TARGET : MONTH_TARGET;
+  const activeTarget = pioneerType === "permanent" ? YEAR_TARGET : auxiliaryTarget;
   const progress = Math.min((trackedTotal / activeTarget) * 100, 100);
   const weekProgress = Math.min((stats.weekly / WEEK_TARGET) * 100, 100);
   const maxMonth = Math.max(...stats.monthly, 50);
@@ -452,7 +458,16 @@ export default function Home() {
             </select>
           </label>}
         </div>
-        <div className="year-pill">{pioneerType === "permanent" ? "600 h" : "30 h/mois"}</div>
+        {pioneerType === "permanent" ? <div className="year-pill">600 h</div> :
+          <select
+            className="year-pill target-select"
+            value={auxiliaryTarget}
+            onChange={(e) => setAuxiliaryTarget(Number(e.target.value) as AuxiliaryTarget)}
+            aria-label="Objectif mensuel auxiliaire"
+          >
+            <option value={15}>15 h/mois</option>
+            <option value={30}>30 h/mois</option>
+          </select>}
       </header>
 
       <button className={`sync-strip ${syncStatus}`} onClick={() => setShowSyncPanel(true)}>
@@ -562,7 +577,7 @@ export default function Home() {
                 </> : <>
                   <div><small>Mois affiché</small><b>{months[selectedAuxMonth]}</b></div>
                   <div><small>Réalisé</small><b>{formatHours(stats.currentMonth)}</b></div>
-                  <div><small>Objectif</small><b>{MONTH_TARGET} h</b></div>
+                  <div><small>Objectif</small><b>{auxiliaryTarget} h</b></div>
                 </>}
                 <div><small>Étudiants</small><b>{stats.studentCount}</b></div>
               </div>
@@ -570,7 +585,7 @@ export default function Home() {
                 {stats.monthly.map((value, i) => <div className="bar-col" key={months[i]}><span>{value || ""}</span><i style={{ height: `${Math.max((value / maxMonth) * 180, value ? 8 : 2)}px` }} /><small>{months[i]}</small></div>)}
               </div>
               <div className="month-list">
-                {months.map((month, i) => <div key={month}><span>{month}</span><i><em style={{ width: `${Math.min((stats.monthly[i] / (pioneerType === "permanent" ? 50 : MONTH_TARGET)) * 100, 100)}%` }} /></i><b>{formatHours(stats.monthly[i])}</b></div>)}
+                {months.map((month, i) => <div key={month}><span>{month}</span><i><em style={{ width: `${Math.min((stats.monthly[i] / (pioneerType === "permanent" ? 50 : auxiliaryTarget)) * 100, 100)}%` }} /></i><b>{formatHours(stats.monthly[i])}</b></div>)}
               </div>
             </> : courseStudents.length ? <>
               <div className="study-picker-row">
