@@ -9,6 +9,10 @@ test("keeps the agreed tracking targets and local storage", async () => {
   const layout = await readFile(new URL("app/layout.tsx", root), "utf8");
   assert.match(page, /YEAR_TARGET = 600/);
   assert.match(page, /WEEK_TARGET = 13/);
+  assert.match(page, /MONTH_TARGET = 30/);
+  assert.match(page, /Pionnier permanent/);
+  assert.match(page, /Pionnier auxiliaire/);
+  assert.match(page, /serviceYearLabel/);
   assert.match(page, /Cours biblique", 2\.5/);
   assert.match(page, /Maison \/ jardin/);
   assert.match(page, /localStorage\.setItem/);

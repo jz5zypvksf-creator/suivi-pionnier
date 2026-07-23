@@ -5,14 +5,26 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 type Category = "Ministère" | "Cours biblique" | "Informel" | "Autre" | "Maison / jardin";
 type Entry = { id: string; date: string; category: Category; hours: number; note: string };
 type View = "accueil" | "encoder" | "journal" | "progression";
+type PioneerType = "permanent" | "auxiliaire";
 
 const YEAR_TARGET = 600;
 const WEEK_TARGET = 13;
+const MONTH_TARGET = 30;
 const STORAGE_KEY = "suivi-pionnier-entries-v1";
+const SETTINGS_KEY = "suivi-pionnier-settings-v1";
 const categories: Category[] = ["Ministère", "Cours biblique", "Informel", "Autre", "Maison / jardin"];
 const months = ["Sep", "Oct", "Nov", "Déc", "Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août"];
 
 const today = () => new Date().toISOString().slice(0, 10);
+const serviceYearStart = (date: string | Date) => {
+  const d = typeof date === "string" ? new Date(`${date}T12:00:00`) : date;
+  return d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1;
+};
+const serviceYears = (() => {
+  const current = serviceYearStart(new Date());
+  return Array.from({ length: 5 }, (_, i) => current - 1 + i);
+})();
+const serviceYearLabel = (start: number) => `${start}–${start + 1}`;
 const serviceMonthIndex = (date: string) => {
   const d = new Date(`${date}T12:00:00`);
   return (d.getMonth() + 4) % 12;
@@ -31,12 +43,20 @@ export default function Home() {
   const [view, setView] = useState<View>("accueil");
   const [ready, setReady] = useState(false);
   const [notice, setNotice] = useState("");
+  const [selectedYear, setSelectedYear] = useState(serviceYearStart(new Date()));
+  const [pioneerType, setPioneerType] = useState<PioneerType>("permanent");
   const [form, setForm] = useState({ date: today(), category: "Ministère" as Category, hours: "2", note: "" });
 
   useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) setEntries(JSON.parse(saved));
+      const savedSettings = localStorage.getItem(SETTINGS_KEY);
+      if (savedSettings) {
+        const settings = JSON.parse(savedSettings);
+        if (typeof settings.selectedYear === "number") setSelectedYear(settings.selectedYear);
+        if (settings.pioneerType === "permanent" || settings.pioneerType === "auxiliaire") setPioneerType(settings.pioneerType);
+      }
     } finally {
       setReady(true);
     }
@@ -46,10 +66,15 @@ export default function Home() {
     if (ready) localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
   }, [entries, ready]);
 
+  useEffect(() => {
+    if (ready) localStorage.setItem(SETTINGS_KEY, JSON.stringify({ selectedYear, pioneerType }));
+  }, [selectedYear, pioneerType, ready]);
+
   const stats = useMemo(() => {
-    const ministry = entries.filter((e) => e.category !== "Maison / jardin");
+    const yearEntries = entries.filter((e) => serviceYearStart(e.date) === selectedYear);
+    const ministry = yearEntries.filter((e) => e.category !== "Maison / jardin");
     const total = ministry.reduce((sum, e) => sum + e.hours, 0);
-    const maintenance = entries.filter((e) => e.category === "Maison / jardin").reduce((sum, e) => sum + e.hours, 0);
+    const maintenance = yearEntries.filter((e) => e.category === "Maison / jardin").reduce((sum, e) => sum + e.hours, 0);
     const weekStart = startOfWeek();
     const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 7);
     const weekly = ministry.filter((e) => {
@@ -59,10 +84,13 @@ export default function Home() {
     const monthly = Array.from({ length: 12 }, (_, i) =>
       ministry.filter((e) => serviceMonthIndex(e.date) === i).reduce((sum, e) => sum + e.hours, 0)
     );
-    return { total, maintenance, weekly, monthly };
-  }, [entries]);
+    const todayIndex = serviceMonthIndex(today());
+    const currentMonth = monthly[todayIndex];
+    return { total, maintenance, weekly, monthly, currentMonth, todayIndex, yearEntries };
+  }, [entries, selectedYear]);
 
   const addEntry = (category: Category, hours: number, note = "") => {
+    setSelectedYear(serviceYearStart(new Date()));
     setEntries((current) => [{ id: crypto.randomUUID(), date: today(), category, hours, note }, ...current]);
     setNotice(`${formatHours(hours)} ajoutées — ${category}`);
     window.setTimeout(() => setNotice(""), 2500);
@@ -78,7 +106,9 @@ export default function Home() {
     setView("journal");
   };
 
-  const progress = Math.min((stats.total / YEAR_TARGET) * 100, 100);
+  const trackedTotal = pioneerType === "permanent" ? stats.total : stats.currentMonth;
+  const activeTarget = pioneerType === "permanent" ? YEAR_TARGET : MONTH_TARGET;
+  const progress = Math.min((trackedTotal / activeTarget) * 100, 100);
   const weekProgress = Math.min((stats.weekly / WEEK_TARGET) * 100, 100);
   const maxMonth = Math.max(...stats.monthly, 50);
 
@@ -88,11 +118,22 @@ export default function Home() {
     <main className="app-shell">
       <header className="topbar">
         <div className="brand-mark">SP</div>
-        <div>
-          <p className="eyebrow">Année de service</p>
-          <h1>Suivi pionnier</h1>
+        <div className="service-controls">
+          <label>
+            <span>Année de service</span>
+            <select value={selectedYear} onChange={(e) => setSelectedYear(Number(e.target.value))} aria-label="Année de service">
+              {serviceYears.map((year) => <option key={year} value={year}>{serviceYearLabel(year)}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>Service</span>
+            <select value={pioneerType} onChange={(e) => setPioneerType(e.target.value as PioneerType)} aria-label="Type de service">
+              <option value="permanent">Pionnier permanent</option>
+              <option value="auxiliaire">Pionnier auxiliaire</option>
+            </select>
+          </label>
         </div>
-        <div className="year-pill">600 h</div>
+        <div className="year-pill">{pioneerType === "permanent" ? "600 h" : "30 h/mois"}</div>
       </header>
 
       {notice && <div className="toast" role="status">{notice}</div>}
@@ -102,22 +143,24 @@ export default function Home() {
           <>
             <section className="hero-card">
               <div className="hero-copy">
-                <p className="eyebrow light">Progression annuelle</p>
-                <strong>{formatHours(stats.total)}</strong>
-                <span>sur {YEAR_TARGET} h</span>
+                <p className="eyebrow light">{pioneerType === "permanent" ? "Progression annuelle" : `Progression · ${months[stats.todayIndex]}`}</p>
+                <strong>{formatHours(trackedTotal)}</strong>
+                <span>sur {activeTarget} h</span>
               </div>
               <div className="ring" style={{ "--progress": `${progress * 3.6}deg` } as React.CSSProperties}>
                 <div><b>{Math.round(progress)}%</b><small>accompli</small></div>
               </div>
               <div className="hero-progress"><i style={{ width: `${progress}%` }} /></div>
-              <p className="encouragement">{YEAR_TARGET - stats.total > 0 ? `Encore ${formatHours(YEAR_TARGET - stats.total)} — avancez à votre rythme.` : "Objectif annuel atteint. Bravo !"}</p>
+              <p className="encouragement">{activeTarget - trackedTotal > 0 ? `Encore ${formatHours(activeTarget - trackedTotal)} — avancez à votre rythme.` : `Objectif ${pioneerType === "permanent" ? "annuel" : "mensuel"} atteint. Bravo !`}</p>
             </section>
 
-            <div className="section-heading">
-              <div><p className="eyebrow">Cette semaine</p><h2>{formatHours(stats.weekly)} <span>/ {WEEK_TARGET} h</span></h2></div>
-              <span className={stats.weekly >= WEEK_TARGET ? "status good" : "status"}>{stats.weekly >= WEEK_TARGET ? "Objectif atteint" : `${formatHours(Math.max(WEEK_TARGET - stats.weekly, 0))} restantes`}</span>
-            </div>
-            <div className="thin-progress"><i style={{ width: `${weekProgress}%` }} /></div>
+            {pioneerType === "permanent" && <>
+              <div className="section-heading">
+                <div><p className="eyebrow">Cette semaine</p><h2>{formatHours(stats.weekly)} <span>/ {WEEK_TARGET} h</span></h2></div>
+                <span className={stats.weekly >= WEEK_TARGET ? "status good" : "status"}>{stats.weekly >= WEEK_TARGET ? "Objectif atteint" : `${formatHours(Math.max(WEEK_TARGET - stats.weekly, 0))} restantes`}</span>
+              </div>
+              <div className="thin-progress"><i style={{ width: `${weekProgress}%` }} /></div>
+            </>}
             <p className="fixed-note">Vos deux cours du week-end représentent une base fixe de 5 h.</p>
 
             <h2 className="quick-title">Ajouter rapidement</h2>
@@ -130,12 +173,12 @@ export default function Home() {
 
             <div className="maintenance-card">
               <span className="maintenance-icon">⌂</span>
-              <div><p className="eyebrow">Suivi séparé</p><h3>Maison & jardin</h3><small>Non comptabilisé dans les 600 h</small></div>
+              <div><p className="eyebrow">Suivi séparé</p><h3>Maison & jardin</h3><small>Non comptabilisé dans l’objectif</small></div>
               <b>{formatHours(stats.maintenance)}</b>
             </div>
 
             <div className="recent-heading"><h2>Dernières activités</h2><button onClick={() => setView("journal")}>Tout voir</button></div>
-            <EntryList entries={entries.slice(0, 3)} onDelete={(id) => setEntries(entries.filter((e) => e.id !== id))} empty="Aucune activité encodée pour le moment." />
+            <EntryList entries={stats.yearEntries.slice(0, 3)} onDelete={(id) => setEntries(entries.filter((e) => e.id !== id))} empty={`Aucune activité pour ${serviceYearLabel(selectedYear)}.`} />
           </>
         )}
 
@@ -156,23 +199,29 @@ export default function Home() {
         {view === "journal" && (
           <section className="panel">
             <p className="eyebrow">Historique</p><h2>Mon journal</h2>
-            <EntryList entries={entries} onDelete={(id) => setEntries(entries.filter((e) => e.id !== id))} empty="Votre journal est encore vide." />
+            <EntryList entries={stats.yearEntries} onDelete={(id) => setEntries(entries.filter((e) => e.id !== id))} empty={`Votre journal ${serviceYearLabel(selectedYear)} est encore vide.`} />
           </section>
         )}
 
         {view === "progression" && (
           <section className="panel">
-            <p className="eyebrow">Vue annuelle</p><h2>Progression par mois</h2>
+            <p className="eyebrow">{serviceYearLabel(selectedYear)}</p><h2>Progression par mois</h2>
             <div className="summary-grid">
-              <div><small>Année</small><b>{formatHours(stats.total)}</b></div>
-              <div><small>Reste</small><b>{formatHours(Math.max(YEAR_TARGET - stats.total, 0))}</b></div>
-              <div><small>Moyenne/mois</small><b>{formatHours(stats.total / 12)}</b></div>
+              {pioneerType === "permanent" ? <>
+                <div><small>Année</small><b>{formatHours(stats.total)}</b></div>
+                <div><small>Reste</small><b>{formatHours(Math.max(YEAR_TARGET - stats.total, 0))}</b></div>
+                <div><small>Moyenne/mois</small><b>{formatHours(stats.total / 12)}</b></div>
+              </> : <>
+                <div><small>Mois affiché</small><b>{months[stats.todayIndex]}</b></div>
+                <div><small>Réalisé</small><b>{formatHours(stats.currentMonth)}</b></div>
+                <div><small>Objectif</small><b>{MONTH_TARGET} h</b></div>
+              </>}
             </div>
             <div className="chart" aria-label="Heures de ministère par mois">
               {stats.monthly.map((value, i) => <div className="bar-col" key={months[i]}><span>{value || ""}</span><i style={{ height: `${Math.max((value / maxMonth) * 180, value ? 8 : 2)}px` }} /><small>{months[i]}</small></div>)}
             </div>
             <div className="month-list">
-              {months.map((month, i) => <div key={month}><span>{month}</span><i><em style={{ width: `${Math.min((stats.monthly[i] / 50) * 100, 100)}%` }} /></i><b>{formatHours(stats.monthly[i])}</b></div>)}
+              {months.map((month, i) => <div key={month}><span>{month}</span><i><em style={{ width: `${Math.min((stats.monthly[i] / (pioneerType === "permanent" ? 50 : MONTH_TARGET)) * 100, 100)}%` }} /></i><b>{formatHours(stats.monthly[i])}</b></div>)}
             </div>
           </section>
         )}
