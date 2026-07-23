@@ -1,0 +1,19 @@
+{
+  "name": "Suivi pionnier",
+  "short_name": "Suivi pionnier",
+  "description": "Suivi quotidien des heures de ministère et des cours bibliques.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#fbfcf9",
+  "theme_color": "#176b55",
+  "lang": "fr",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

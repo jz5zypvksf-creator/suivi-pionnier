@@ -14,6 +14,7 @@ const MONTH_TARGET = 30;
 const STORAGE_KEY = "suivi-pionnier-entries-v1";
 const SETTINGS_KEY = "suivi-pionnier-settings-v1";
 const STUDENTS_KEY = "suivi-pionnier-students-v1";
+const ARCHIVED_STUDENTS_KEY = "suivi-pionnier-archived-students-v1";
 const categories: Category[] = ["Ministère", "Cours biblique", "Informel", "Autre", "Maison / jardin"];
 const months = ["Sep", "Oct", "Nov", "Déc", "Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août"];
 const fullMonths = ["Septembre", "Octobre", "Novembre", "Décembre", "Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août"];
@@ -51,24 +52,28 @@ export default function Home() {
   const [pioneerType, setPioneerType] = useState<PioneerType>("permanent");
   const [selectedAuxMonth, setSelectedAuxMonth] = useState(serviceMonthIndex(today()));
   const [students, setStudents] = useState<string[]>([]);
+  const [archivedStudents, setArchivedStudents] = useState<string[]>([]);
   const [progressSection, setProgressSection] = useState<ProgressSection>("heures");
   const [selectedStudyStudent, setSelectedStudyStudent] = useState("");
   const [managingStudent, setManagingStudent] = useState<string | null>(null);
   const [studentNameDraft, setStudentNameDraft] = useState("");
+  const [showArchives, setShowArchives] = useState(false);
   const [form, setForm] = useState({ date: today(), category: "Ministère" as Category, hours: "2", note: "", student: "", newStudent: "" });
 
   useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
+      const savedArchivedStudents: string[] = JSON.parse(localStorage.getItem(ARCHIVED_STUDENTS_KEY) ?? "[]");
+      setArchivedStudents(savedArchivedStudents);
       if (saved) {
         const savedEntries: Entry[] = JSON.parse(saved);
         setEntries(savedEntries);
         const entryStudents = savedEntries.flatMap((entry) => entry.student ? [entry.student] : []);
         const savedStudents: string[] = JSON.parse(localStorage.getItem(STUDENTS_KEY) ?? "[]");
-        setStudents(Array.from(new Set([...savedStudents, ...entryStudents])).sort((a, b) => a.localeCompare(b, "fr")));
+        setStudents(Array.from(new Set([...savedStudents, ...entryStudents])).filter((student) => !savedArchivedStudents.includes(student)).sort((a, b) => a.localeCompare(b, "fr")));
       } else {
         const savedStudents: string[] = JSON.parse(localStorage.getItem(STUDENTS_KEY) ?? "[]");
-        setStudents(savedStudents);
+        setStudents(savedStudents.filter((student) => !savedArchivedStudents.includes(student)));
       }
       const savedSettings = localStorage.getItem(SETTINGS_KEY);
       if (savedSettings) {
@@ -94,6 +99,14 @@ export default function Home() {
     if (ready) localStorage.setItem(STUDENTS_KEY, JSON.stringify(students));
   }, [students, ready]);
 
+  useEffect(() => {
+    if (ready) localStorage.setItem(ARCHIVED_STUDENTS_KEY, JSON.stringify(archivedStudents));
+  }, [archivedStudents, ready]);
+
+  useEffect(() => {
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+  }, []);
+
   const stats = useMemo(() => {
     const yearEntries = entries.filter((e) => serviceYearStart(e.date) === selectedYear);
     const ministry = yearEntries.filter((e) => e.category !== "Maison / jardin");
@@ -109,9 +122,9 @@ export default function Home() {
       ministry.filter((e) => serviceMonthIndex(e.date) === i).reduce((sum, e) => sum + e.hours, 0)
     );
     const currentMonth = monthly[selectedAuxMonth];
-    const studentCount = new Set(yearEntries.filter((e) => e.category === "Cours biblique" && e.student).map((e) => e.student)).size;
+    const studentCount = new Set(yearEntries.filter((e) => e.category === "Cours biblique" && e.student && !archivedStudents.includes(e.student)).map((e) => e.student)).size;
     return { total, maintenance, weekly, monthly, currentMonth, yearEntries, studentCount };
-  }, [entries, selectedYear, selectedAuxMonth]);
+  }, [entries, selectedYear, selectedAuxMonth, archivedStudents]);
 
   const addEntry = (category: Category, hours: number, note = "") => {
     setSelectedYear(serviceYearStart(new Date()));
@@ -159,7 +172,7 @@ export default function Home() {
       setNotice("Le nom de l’étudiant est requis");
       return;
     }
-    if (nextName !== managingStudent && students.includes(nextName)) {
+    if (nextName !== managingStudent && (students.includes(nextName) || archivedStudents.includes(nextName))) {
       setNotice("Un étudiant porte déjà ce nom");
       return;
     }
@@ -172,18 +185,24 @@ export default function Home() {
     setNotice("Profil étudiant modifié");
   };
 
-  const deleteStudentProfile = () => {
+  const archiveStudentProfile = () => {
     if (!managingStudent) return;
     const linkedCourses = entries.filter((entry) => entry.category === "Cours biblique" && entry.student === managingStudent).length;
-    const confirmed = window.confirm(`Supprimer le profil de ${managingStudent} ainsi que ses ${linkedCourses} cours et toutes les notes associées ? Cette action est irréversible.`);
+    const confirmed = window.confirm(`Archiver le profil de ${managingStudent} ? Ses ${linkedCourses} cours et toutes ses notes seront conservés et pourront être restaurés.`);
     if (!confirmed) return;
-    const deletedName = managingStudent;
-    setEntries((current) => current.filter((entry) => !(entry.category === "Cours biblique" && entry.student === deletedName)));
-    setStudents((current) => current.filter((student) => student !== deletedName));
-    setForm((current) => ({ ...current, student: current.student === deletedName ? "" : current.student }));
-    setSelectedStudyStudent((current) => current === deletedName ? "" : current);
+    const archivedName = managingStudent;
+    setStudents((current) => current.filter((student) => student !== archivedName));
+    setArchivedStudents((current) => Array.from(new Set([...current, archivedName])).sort((a, b) => a.localeCompare(b, "fr")));
+    setForm((current) => ({ ...current, student: current.student === archivedName ? "" : current.student }));
+    setSelectedStudyStudent((current) => current === archivedName ? "" : current);
     setManagingStudent(null);
-    setNotice("Profil étudiant supprimé");
+    setNotice("Profil étudiant archivé");
+  };
+
+  const restoreStudentProfile = (student: string) => {
+    setArchivedStudents((current) => current.filter((name) => name !== student));
+    setStudents((current) => Array.from(new Set([...current, student])).sort((a, b) => a.localeCompare(b, "fr")));
+    setNotice(`${student} a été rétabli dans les étudiants actifs`);
   };
 
   const trackedTotal = pioneerType === "permanent" ? stats.total : stats.currentMonth;
@@ -191,7 +210,7 @@ export default function Home() {
   const progress = Math.min((trackedTotal / activeTarget) * 100, 100);
   const weekProgress = Math.min((stats.weekly / WEEK_TARGET) * 100, 100);
   const maxMonth = Math.max(...stats.monthly, 50);
-  const courseStudents = Array.from(new Set(stats.yearEntries.filter((entry) => entry.category === "Cours biblique" && entry.student).map((entry) => entry.student!))).sort((a, b) => a.localeCompare(b, "fr"));
+  const courseStudents = Array.from(new Set(stats.yearEntries.filter((entry) => entry.category === "Cours biblique" && entry.student && !archivedStudents.includes(entry.student)).map((entry) => entry.student!))).sort((a, b) => a.localeCompare(b, "fr"));
   const activeStudyStudent = courseStudents.includes(selectedStudyStudent) ? selectedStudyStudent : (courseStudents[0] ?? "");
   const studentCourses = stats.yearEntries
     .filter((entry) => entry.category === "Cours biblique" && entry.student === activeStudyStudent)
@@ -371,6 +390,7 @@ export default function Home() {
                 </article>)}
               </div>
             </> : <div className="empty">Ajoutez d’abord un cours biblique associé à un étudiant pour consulter son suivi.</div>}
+            {progressSection === "cours" && <button className="archives-button" onClick={() => setShowArchives(true)}>Étudiants archivés <span>{archivedStudents.length}</span></button>}
           </section>
         )}
       </section>
@@ -395,9 +415,26 @@ export default function Home() {
               setView("progression");
               setManagingStudent(null);
             }}>Voir son suivi complet</button>}
-            <button className="danger" onClick={deleteStudentProfile}>Supprimer le profil et son historique</button>
+            <button className="archive-action" onClick={archiveStudentProfile}>Archiver le profil</button>
           </div>
-          <p className="danger-note">La suppression effacera également tous les cours et toutes les notes associés à cet étudiant.</p>
+          <p className="archive-note">L’archivage masque l’étudiant des listes actives, mais conserve tous ses cours et toutes ses notes. Vous pourrez le rétablir plus tard.</p>
+        </section>
+      </div>}
+
+      {showArchives && <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setShowArchives(false); }}>
+        <section className="student-modal archives-modal" role="dialog" aria-modal="true" aria-labelledby="archives-title">
+          <button className="modal-close" onClick={() => setShowArchives(false)} aria-label="Fermer">×</button>
+          <p className="eyebrow">Conservation des dossiers</p>
+          <h2 id="archives-title">Étudiants archivés</h2>
+          {archivedStudents.length ? <div className="archive-list">
+            {archivedStudents.map((student) => {
+              const archivedCourses = entries.filter((entry) => entry.category === "Cours biblique" && entry.student === student);
+              return <article key={student}>
+                <div><b>{student}</b><small>{archivedCourses.length} cours · {formatHours(archivedCourses.reduce((total, entry) => total + entry.hours, 0))}</small></div>
+                <button onClick={() => restoreStudentProfile(student)}>Rétablir</button>
+              </article>;
+            })}
+          </div> : <div className="empty">Aucun étudiant archivé.</div>}
         </section>
       </div>}
 

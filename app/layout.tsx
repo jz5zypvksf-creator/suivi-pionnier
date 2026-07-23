@@ -4,7 +4,14 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Suivi pionnier",
   description: "Suivi quotidien de votre progression vers l’objectif annuel de 600 heures.",
-  icons: { icon: "/favicon.svg" },
+  manifest: "/manifest.webmanifest",
+  applicationName: "Suivi pionnier",
+  appleWebApp: {
+    capable: true,
+    title: "Suivi pionnier",
+    statusBarStyle: "default",
+  },
+  icons: { icon: "/favicon.svg", apple: "/favicon.svg" },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
