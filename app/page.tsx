@@ -435,6 +435,28 @@ export default function Home() {
     setNotice(`${student} a été rétabli dans les étudiants actifs`);
   };
 
+  const deleteStudentPermanently = (student: string) => {
+    const linkedCourses = entries.filter((entry) => entry.category === "Cours biblique" && entry.student === student).length;
+    const firstConfirmation = window.confirm(
+      `Supprimer définitivement le profil de ${student} ? Ses ${linkedCourses} cours et toutes leurs notes seront effacés. Cette action est irréversible.`,
+    );
+    if (!firstConfirmation) return;
+    const secondConfirmation = window.prompt(
+      `Deuxième confirmation : saisissez SUPPRIMER pour effacer définitivement le profil de ${student}.`,
+    );
+    if (secondConfirmation?.trim().toLocaleUpperCase("fr") !== "SUPPRIMER") {
+      setNotice("Suppression définitive annulée");
+      return;
+    }
+    setEntries((current) => current.filter((entry) => entry.student !== student));
+    setStudents((current) => current.filter((name) => name !== student));
+    setArchivedStudents((current) => current.filter((name) => name !== student));
+    setForm((current) => ({ ...current, student: current.student === student ? "" : current.student }));
+    setSelectedStudyStudent((current) => current === student ? "" : current);
+    setManagingStudent(null);
+    setNotice(`Le profil de ${student} a été supprimé définitivement`);
+  };
+
   const trackedTotal = pioneerType === "permanent" ? stats.total : stats.currentMonth;
   const activeTarget = pioneerType === "permanent" ? YEAR_TARGET : auxiliaryTarget;
   const progress = Math.min((trackedTotal / activeTarget) * 100, 100);
@@ -662,8 +684,9 @@ export default function Home() {
               setManagingStudent(null);
             }}>Voir son suivi complet</button>}
             <button className="archive-action" onClick={archiveStudentProfile}>Archiver le profil</button>
+            <button className="delete-profile-action" onClick={() => deleteStudentPermanently(managingStudent)}>Supprimer définitivement</button>
           </div>
-          <p className="archive-note">L’archivage masque l’étudiant des listes actives, mais conserve tous ses cours et toutes ses notes. Vous pourrez le rétablir plus tard.</p>
+          <p className="archive-note">L’archivage conserve tous les cours et notes pour un rétablissement ultérieur. La suppression définitive les efface après deux confirmations.</p>
         </section>
       </div>}
 
@@ -677,7 +700,10 @@ export default function Home() {
               const archivedCourses = entries.filter((entry) => entry.category === "Cours biblique" && entry.student === student);
               return <article key={student}>
                 <div><b>{student}</b><small>{archivedCourses.length} cours · {formatHours(archivedCourses.reduce((total, entry) => total + entry.hours, 0))}</small></div>
-                <button onClick={() => restoreStudentProfile(student)}>Rétablir</button>
+                <div className="archive-actions">
+                  <button onClick={() => restoreStudentProfile(student)}>Rétablir</button>
+                  <button className="delete-archived" onClick={() => deleteStudentPermanently(student)}>Supprimer</button>
+                </div>
               </article>;
             })}
           </div> : <div className="empty">Aucun étudiant archivé.</div>}

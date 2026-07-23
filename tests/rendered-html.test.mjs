@@ -27,6 +27,8 @@ test("keeps the agreed tracking targets and local storage", async () => {
   assert.match(page, /Gérer le profil/);
   assert.match(page, /Enregistrer les modifications/);
   assert.match(page, /Archiver le profil/);
+  assert.match(page, /Supprimer définitivement/);
+  assert.match(page, /saisissez SUPPRIMER/);
   assert.match(page, /Étudiants archivés/);
   assert.match(page, /Rétablir/);
   assert.match(page, /serviceWorker/);
