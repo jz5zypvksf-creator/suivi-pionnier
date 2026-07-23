@@ -6,6 +6,7 @@ type Category = "Ministère" | "Cours biblique" | "Informel" | "Autre" | "Maison
 type Entry = { id: string; date: string; category: Category; hours: number; note: string; student?: string };
 type View = "accueil" | "encoder" | "journal" | "progression";
 type PioneerType = "permanent" | "auxiliaire";
+type ProgressSection = "heures" | "cours";
 
 const YEAR_TARGET = 600;
 const WEEK_TARGET = 13;
@@ -50,6 +51,8 @@ export default function Home() {
   const [pioneerType, setPioneerType] = useState<PioneerType>("permanent");
   const [selectedAuxMonth, setSelectedAuxMonth] = useState(serviceMonthIndex(today()));
   const [students, setStudents] = useState<string[]>([]);
+  const [progressSection, setProgressSection] = useState<ProgressSection>("heures");
+  const [selectedStudyStudent, setSelectedStudyStudent] = useState("");
   const [form, setForm] = useState({ date: today(), category: "Ministère" as Category, hours: "2", note: "", student: "", newStudent: "" });
 
   useEffect(() => {
@@ -147,6 +150,13 @@ export default function Home() {
   const progress = Math.min((trackedTotal / activeTarget) * 100, 100);
   const weekProgress = Math.min((stats.weekly / WEEK_TARGET) * 100, 100);
   const maxMonth = Math.max(...stats.monthly, 50);
+  const courseStudents = Array.from(new Set(stats.yearEntries.filter((entry) => entry.category === "Cours biblique" && entry.student).map((entry) => entry.student!))).sort((a, b) => a.localeCompare(b, "fr"));
+  const activeStudyStudent = courseStudents.includes(selectedStudyStudent) ? selectedStudyStudent : (courseStudents[0] ?? "");
+  const studentCourses = stats.yearEntries
+    .filter((entry) => entry.category === "Cours biblique" && entry.student === activeStudyStudent)
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const studentCourseHours = studentCourses.reduce((total, entry) => total + entry.hours, 0);
+  const latestProgressNote = studentCourses.find((entry) => entry.note)?.note;
 
   if (!ready) return <main className="loading">Préparation de votre suivi…</main>;
 
@@ -262,25 +272,58 @@ export default function Home() {
 
         {view === "progression" && (
           <section className="panel">
-            <p className="eyebrow">{serviceYearLabel(selectedYear)}</p><h2>Progression par mois</h2>
-            <div className="summary-grid">
-              {pioneerType === "permanent" ? <>
-                <div><small>Année</small><b>{formatHours(stats.total)}</b></div>
-                <div><small>Reste</small><b>{formatHours(Math.max(YEAR_TARGET - stats.total, 0))}</b></div>
-                <div><small>Moyenne/mois</small><b>{formatHours(stats.total / 12)}</b></div>
-              </> : <>
-                <div><small>Mois affiché</small><b>{months[selectedAuxMonth]}</b></div>
-                <div><small>Réalisé</small><b>{formatHours(stats.currentMonth)}</b></div>
-                <div><small>Objectif</small><b>{MONTH_TARGET} h</b></div>
-              </>}
-              <div><small>Étudiants</small><b>{stats.studentCount}</b></div>
+            <p className="eyebrow">{serviceYearLabel(selectedYear)}</p>
+            <h2>{progressSection === "heures" ? "Progression par mois" : "Suivi cours bibliques"}</h2>
+            <div className="progress-tabs" role="tablist" aria-label="Type de progression">
+              <button className={progressSection === "heures" ? "active" : ""} onClick={() => setProgressSection("heures")} role="tab" aria-selected={progressSection === "heures"}>Heures</button>
+              <button className={progressSection === "cours" ? "active" : ""} onClick={() => setProgressSection("cours")} role="tab" aria-selected={progressSection === "cours"}>Suivi cours bibliques</button>
             </div>
-            <div className="chart" aria-label="Heures de ministère par mois">
-              {stats.monthly.map((value, i) => <div className="bar-col" key={months[i]}><span>{value || ""}</span><i style={{ height: `${Math.max((value / maxMonth) * 180, value ? 8 : 2)}px` }} /><small>{months[i]}</small></div>)}
-            </div>
-            <div className="month-list">
-              {months.map((month, i) => <div key={month}><span>{month}</span><i><em style={{ width: `${Math.min((stats.monthly[i] / (pioneerType === "permanent" ? 50 : MONTH_TARGET)) * 100, 100)}%` }} /></i><b>{formatHours(stats.monthly[i])}</b></div>)}
-            </div>
+
+            {progressSection === "heures" ? <>
+              <div className="summary-grid">
+                {pioneerType === "permanent" ? <>
+                  <div><small>Année</small><b>{formatHours(stats.total)}</b></div>
+                  <div><small>Reste</small><b>{formatHours(Math.max(YEAR_TARGET - stats.total, 0))}</b></div>
+                  <div><small>Moyenne/mois</small><b>{formatHours(stats.total / 12)}</b></div>
+                </> : <>
+                  <div><small>Mois affiché</small><b>{months[selectedAuxMonth]}</b></div>
+                  <div><small>Réalisé</small><b>{formatHours(stats.currentMonth)}</b></div>
+                  <div><small>Objectif</small><b>{MONTH_TARGET} h</b></div>
+                </>}
+                <div><small>Étudiants</small><b>{stats.studentCount}</b></div>
+              </div>
+              <div className="chart" aria-label="Heures de ministère par mois">
+                {stats.monthly.map((value, i) => <div className="bar-col" key={months[i]}><span>{value || ""}</span><i style={{ height: `${Math.max((value / maxMonth) * 180, value ? 8 : 2)}px` }} /><small>{months[i]}</small></div>)}
+              </div>
+              <div className="month-list">
+                {months.map((month, i) => <div key={month}><span>{month}</span><i><em style={{ width: `${Math.min((stats.monthly[i] / (pioneerType === "permanent" ? 50 : MONTH_TARGET)) * 100, 100)}%` }} /></i><b>{formatHours(stats.monthly[i])}</b></div>)}
+              </div>
+            </> : courseStudents.length ? <>
+              <label className="study-picker">Étudiant
+                <select value={activeStudyStudent} onChange={(e) => setSelectedStudyStudent(e.target.value)}>
+                  {courseStudents.map((student) => <option key={student} value={student}>{student}</option>)}
+                </select>
+              </label>
+              <div className="study-overview">
+                <div><small>Cours donnés</small><b>{studentCourses.length}</b></div>
+                <div><small>Heures</small><b>{formatHours(studentCourseHours)}</b></div>
+                <div><small>Dernier cours</small><b>{studentCourses[0] ? new Date(`${studentCourses[0].date}T12:00:00`).toLocaleDateString("fr-BE", { day: "numeric", month: "short" }) : "—"}</b></div>
+              </div>
+              <div className="latest-note">
+                <p className="eyebrow">Dernière note de progression</p>
+                <p>{latestProgressNote || "Aucune note de progression n’a encore été renseignée."}</p>
+              </div>
+              <div className="course-history-heading"><h3>Historique des cours</h3><span>{studentCourses.length} cours</span></div>
+              <div className="course-timeline">
+                {studentCourses.map((course) => <article key={course.id}>
+                  <div className="timeline-dot" />
+                  <div className="course-card">
+                    <div><time>{new Date(`${course.date}T12:00:00`).toLocaleDateString("fr-BE", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</time><b>{formatHours(course.hours)}</b></div>
+                    <p>{course.note || "Aucune note pour ce cours."}</p>
+                  </div>
+                </article>)}
+              </div>
+            </> : <div className="empty">Ajoutez d’abord un cours biblique associé à un étudiant pour consulter son suivi.</div>}
           </section>
         )}
       </section>

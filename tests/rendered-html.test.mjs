@@ -18,6 +18,9 @@ test("keeps the agreed tracking targets and local storage", async () => {
   assert.match(page, /STUDENTS_KEY/);
   assert.match(page, /Ajouter un nouvel étudiant/);
   assert.match(page, /Note sur ce cours/);
+  assert.match(page, /Suivi cours bibliques/);
+  assert.match(page, /Dernière note de progression/);
+  assert.match(page, /Historique des cours/);
   assert.match(page, /category: "Cours biblique", hours: "2,5"/);
   assert.match(page, /Maison \/ jardin/);
   assert.match(page, /localStorage\.setItem/);
