@@ -20,6 +20,7 @@ const STORAGE_KEY = "suivi-pionnier-entries-v1";
 const SETTINGS_KEY = "suivi-pionnier-settings-v1";
 const STUDENTS_KEY = "suivi-pionnier-students-v1";
 const ARCHIVED_STUDENTS_KEY = "suivi-pionnier-archived-students-v1";
+const PRODUCTION_URL = "https://suivi-pionnier.vercel.app/";
 const categories: Category[] = ["Ministère", "Cours biblique", "Informel", "Autre", "Maison / jardin"];
 const months = ["Sep", "Oct", "Nov", "Déc", "Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août"];
 const fullMonths = ["Septembre", "Octobre", "Novembre", "Décembre", "Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août"];
@@ -214,7 +215,7 @@ export default function Home() {
     setAuthMessage("Envoi du lien de connexion…");
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: window.location.origin },
+      options: { emailRedirectTo: PRODUCTION_URL },
     });
     setAuthMessage(error ? `Connexion impossible : ${error.message}` : "Un lien de connexion vous a été envoyé par e-mail.");
   };
