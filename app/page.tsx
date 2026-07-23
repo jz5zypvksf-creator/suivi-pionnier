@@ -1,12 +1,17 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import type { User } from "@supabase/supabase-js";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 type Category = "Ministère" | "Cours biblique" | "Informel" | "Autre" | "Maison / jardin";
 type Entry = { id: string; date: string; category: Category; hours: number; note: string; student?: string };
 type View = "accueil" | "encoder" | "journal" | "progression";
 type PioneerType = "permanent" | "auxiliaire";
 type ProgressSection = "heures" | "cours";
+type SyncStatus = "local" | "syncing" | "synced" | "error";
+type CloudStudent = { id: string; name: string; archived: boolean };
+type CloudActivity = { id: string; activity_date: string; category: Category; hours: number; note: string; student_id: string | null };
 
 const YEAR_TARGET = 600;
 const WEEK_TARGET = 13;
@@ -58,7 +63,169 @@ export default function Home() {
   const [managingStudent, setManagingStudent] = useState<string | null>(null);
   const [studentNameDraft, setStudentNameDraft] = useState("");
   const [showArchives, setShowArchives] = useState(false);
+  const [showSyncPanel, setShowSyncPanel] = useState(false);
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authMessage, setAuthMessage] = useState("");
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>("local");
+  const [cloudReady, setCloudReady] = useState(false);
+  const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [form, setForm] = useState({ date: today(), category: "Ministère" as Category, hours: "2", note: "", student: "", newStudent: "" });
+
+  const pushCloudSnapshot = async (
+    userId: string,
+    snapshotEntries = entries,
+    snapshotStudents = students,
+    snapshotArchived = archivedStudents,
+    snapshotSettings = { selectedYear, pioneerType, selectedAuxMonth },
+  ) => {
+    const desiredNames = Array.from(new Set([
+      ...snapshotStudents,
+      ...snapshotArchived,
+      ...snapshotEntries.flatMap((entry) => entry.student ? [entry.student] : []),
+    ]));
+
+    const { data: existingStudentRows, error: studentReadError } = await supabase
+      .from("students")
+      .select("id,name,archived")
+      .eq("user_id", userId);
+    if (studentReadError) throw studentReadError;
+
+    const existingByName = new Map((existingStudentRows as CloudStudent[]).map((student) => [student.name.toLocaleLowerCase("fr"), student]));
+    const studentRows = desiredNames.map((name) => {
+      const existing = existingByName.get(name.toLocaleLowerCase("fr"));
+      return {
+        id: existing?.id ?? crypto.randomUUID(),
+        user_id: userId,
+        name,
+        archived: snapshotArchived.includes(name),
+      };
+    });
+    if (studentRows.length) {
+      const { error } = await supabase.from("students").upsert(studentRows);
+      if (error) throw error;
+    }
+
+    const studentIdByName = new Map(studentRows.map((student) => [student.name, student.id]));
+    const activityRows = snapshotEntries.map((entry) => ({
+      id: entry.id,
+      user_id: userId,
+      activity_date: entry.date,
+      category: entry.category,
+      hours: entry.hours,
+      note: entry.note,
+      student_id: entry.student ? (studentIdByName.get(entry.student) ?? null) : null,
+    }));
+    if (activityRows.length) {
+      const { error } = await supabase.from("activities").upsert(activityRows);
+      if (error) throw error;
+    }
+
+    const { data: existingActivities, error: activityReadError } = await supabase
+      .from("activities")
+      .select("id")
+      .eq("user_id", userId);
+    if (activityReadError) throw activityReadError;
+    const localActivityIds = new Set(snapshotEntries.map((entry) => entry.id));
+    for (const remoteEntry of existingActivities ?? []) {
+      if (!localActivityIds.has(remoteEntry.id)) {
+        const { error } = await supabase.from("activities").delete().eq("id", remoteEntry.id).eq("user_id", userId);
+        if (error) throw error;
+      }
+    }
+
+    const desiredStudentIds = new Set(studentRows.map((student) => student.id));
+    for (const remoteStudent of existingStudentRows as CloudStudent[]) {
+      if (!desiredStudentIds.has(remoteStudent.id)) {
+        const { error } = await supabase.from("students").delete().eq("id", remoteStudent.id).eq("user_id", userId);
+        if (error) throw error;
+      }
+    }
+
+    const { error: settingsError } = await supabase.from("pioneer_settings").upsert({
+      user_id: userId,
+      pioneer_type: snapshotSettings.pioneerType,
+      selected_year: snapshotSettings.selectedYear,
+      selected_aux_month: snapshotSettings.selectedAuxMonth,
+    });
+    if (settingsError) throw settingsError;
+  };
+
+  const pullAndMergeCloud = async (user: User) => {
+    setSyncStatus("syncing");
+    setCloudReady(false);
+    try {
+      const [studentResult, activityResult, settingsResult] = await Promise.all([
+        supabase.from("students").select("id,name,archived").eq("user_id", user.id),
+        supabase.from("activities").select("id,activity_date,category,hours,note,student_id").eq("user_id", user.id),
+        supabase.from("pioneer_settings").select("pioneer_type,selected_year,selected_aux_month").eq("user_id", user.id).maybeSingle(),
+      ]);
+      if (studentResult.error) throw studentResult.error;
+      if (activityResult.error) throw activityResult.error;
+      if (settingsResult.error) throw settingsResult.error;
+
+      const remoteStudents = studentResult.data as CloudStudent[];
+      const studentNameById = new Map(remoteStudents.map((student) => [student.id, student.name]));
+      const remoteEntries = (activityResult.data as CloudActivity[]).map((entry): Entry => ({
+        id: entry.id,
+        date: entry.activity_date,
+        category: entry.category,
+        hours: Number(entry.hours),
+        note: entry.note ?? "",
+        student: entry.student_id ? studentNameById.get(entry.student_id) : undefined,
+      }));
+
+      const mergedEntriesById = new Map(entries.map((entry) => [entry.id, entry]));
+      remoteEntries.forEach((entry) => mergedEntriesById.set(entry.id, entry));
+      const mergedEntries = Array.from(mergedEntriesById.values()).sort((a, b) => b.date.localeCompare(a.date));
+      const remoteActive = remoteStudents.filter((student) => !student.archived).map((student) => student.name);
+      const remoteArchived = remoteStudents.filter((student) => student.archived).map((student) => student.name);
+      const mergedArchived = Array.from(new Set([...archivedStudents, ...remoteArchived])).sort((a, b) => a.localeCompare(b, "fr"));
+      const mergedActive = Array.from(new Set([...students, ...remoteActive]))
+        .filter((student) => !mergedArchived.includes(student))
+        .sort((a, b) => a.localeCompare(b, "fr"));
+      const remoteSettings = settingsResult.data;
+      const effectiveSettings = remoteSettings ? {
+        selectedYear: remoteSettings.selected_year,
+        pioneerType: remoteSettings.pioneer_type as PioneerType,
+        selectedAuxMonth: remoteSettings.selected_aux_month,
+      } : { selectedYear, pioneerType, selectedAuxMonth };
+
+      setEntries(mergedEntries);
+      setStudents(mergedActive);
+      setArchivedStudents(mergedArchived);
+      setSelectedYear(effectiveSettings.selectedYear);
+      setPioneerType(effectiveSettings.pioneerType);
+      setSelectedAuxMonth(effectiveSettings.selectedAuxMonth);
+      await pushCloudSnapshot(user.id, mergedEntries, mergedActive, mergedArchived, effectiveSettings);
+      setCloudReady(true);
+      setSyncStatus("synced");
+      setAuthMessage("Toutes les données sont synchronisées.");
+    } catch {
+      setSyncStatus("error");
+      setAuthMessage("La synchronisation est momentanément indisponible. Vos données restent sur cet appareil.");
+    }
+  };
+
+  const sendMagicLink = async (event: FormEvent) => {
+    event.preventDefault();
+    const email = authEmail.trim();
+    if (!email) return;
+    setAuthMessage("Envoi du lien de connexion…");
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: window.location.origin },
+    });
+    setAuthMessage(error ? `Connexion impossible : ${error.message}` : "Un lien de connexion vous a été envoyé par e-mail.");
+  };
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    setAuthUser(null);
+    setCloudReady(false);
+    setSyncStatus("local");
+    setAuthMessage("Mode local activé.");
+  };
 
   useEffect(() => {
     try {
@@ -106,6 +273,42 @@ export default function Home() {
   useEffect(() => {
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setAuthUser(data.user));
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthUser(session?.user ?? null);
+    });
+    return () => subscription.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (ready && authUser) queueMicrotask(() => void pullAndMergeCloud(authUser));
+    if (ready && !authUser) {
+      queueMicrotask(() => {
+        setCloudReady(false);
+        setSyncStatus("local");
+      });
+    }
+    // La synchronisation initiale doit uniquement suivre l'identité et le chargement local.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUser?.id, ready]);
+
+  useEffect(() => {
+    if (!authUser || !cloudReady) return;
+    if (syncTimer.current) clearTimeout(syncTimer.current);
+    syncTimer.current = setTimeout(() => {
+      setSyncStatus("syncing");
+      pushCloudSnapshot(authUser.id)
+        .then(() => setSyncStatus("synced"))
+        .catch(() => setSyncStatus("error"));
+    }, 800);
+    return () => {
+      if (syncTimer.current) clearTimeout(syncTimer.current);
+    };
+    // Les données listées constituent l'instantané à envoyer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries, students, archivedStudents, selectedYear, pioneerType, selectedAuxMonth, authUser?.id, cloudReady]);
 
   const stats = useMemo(() => {
     const yearEntries = entries.filter((e) => serviceYearStart(e.date) === selectedYear);
@@ -219,6 +422,7 @@ export default function Home() {
   const latestProgressNote = studentCourses.find((entry) => entry.note)?.note;
   const managedStudentCourses = managingStudent ? entries.filter((entry) => entry.category === "Cours biblique" && entry.student === managingStudent) : [];
   const managedStudentHours = managedStudentCourses.reduce((total, entry) => total + entry.hours, 0);
+  const syncLabel = syncStatus === "syncing" ? "Synchronisation…" : syncStatus === "synced" ? "Synchronisé" : syncStatus === "error" ? "À resynchroniser" : "Mode local";
 
   if (!ready) return <main className="loading">Préparation de votre suivi…</main>;
 
@@ -249,6 +453,12 @@ export default function Home() {
         </div>
         <div className="year-pill">{pioneerType === "permanent" ? "600 h" : "30 h/mois"}</div>
       </header>
+
+      <button className={`sync-strip ${syncStatus}`} onClick={() => setShowSyncPanel(true)}>
+        <span className="sync-cloud">☁</span>
+        <span><b>{authUser ? syncLabel : "Activer la synchronisation"}</b><small>{authUser?.email ?? "Retrouvez vos données sur tous vos appareils"}</small></span>
+        <span className="sync-arrow">›</span>
+      </button>
 
       {notice && <div className="toast" role="status">{notice}</div>}
 
@@ -435,6 +645,35 @@ export default function Home() {
               </article>;
             })}
           </div> : <div className="empty">Aucun étudiant archivé.</div>}
+        </section>
+      </div>}
+
+      {showSyncPanel && <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setShowSyncPanel(false); }}>
+        <section className="student-modal sync-modal" role="dialog" aria-modal="true" aria-labelledby="sync-title">
+          <button className="modal-close" onClick={() => setShowSyncPanel(false)} aria-label="Fermer">×</button>
+          <p className="eyebrow">Multi-appareils</p>
+          <h2 id="sync-title">Synchronisation</h2>
+          {authUser ? <>
+            <div className={`sync-account-state ${syncStatus}`}>
+              <span>☁</span>
+              <div><b>{syncLabel}</b><small>{authUser.email}</small></div>
+            </div>
+            <p className="sync-explanation">Vos heures, étudiants, cours, notes et archives sont associés à ce compte.</p>
+            <div className="modal-actions">
+              <button className="primary" onClick={() => void pullAndMergeCloud(authUser)}>Synchroniser maintenant</button>
+              <button className="secondary" onClick={signOut}>Se déconnecter</button>
+            </div>
+          </> : <>
+            <p className="sync-explanation">Utilisez la même adresse e-mail sur votre ordinateur, votre iPhone et votre téléphone Android. Aucun mot de passe n’est nécessaire.</p>
+            <form className="sync-form" onSubmit={sendMagicLink}>
+              <label>Adresse e-mail
+                <input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="votre@email.be" autoComplete="email" required />
+              </label>
+              <button className="primary" type="submit">Recevoir le lien de connexion</button>
+            </form>
+          </>}
+          {authMessage && <p className="auth-message" role="status">{authMessage}</p>}
+          <p className="privacy-note">Lors de la première connexion, les données déjà enregistrées sur cet appareil seront importées automatiquement.</p>
         </section>
       </div>}
 
