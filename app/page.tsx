@@ -53,6 +53,8 @@ export default function Home() {
   const [students, setStudents] = useState<string[]>([]);
   const [progressSection, setProgressSection] = useState<ProgressSection>("heures");
   const [selectedStudyStudent, setSelectedStudyStudent] = useState("");
+  const [managingStudent, setManagingStudent] = useState<string | null>(null);
+  const [studentNameDraft, setStudentNameDraft] = useState("");
   const [form, setForm] = useState({ date: today(), category: "Ministère" as Category, hours: "2", note: "", student: "", newStudent: "" });
 
   useEffect(() => {
@@ -145,6 +147,45 @@ export default function Home() {
     setView("encoder");
   };
 
+  const openStudentProfile = (student: string) => {
+    setManagingStudent(student);
+    setStudentNameDraft(student);
+  };
+
+  const saveStudentProfile = () => {
+    if (!managingStudent) return;
+    const nextName = studentNameDraft.trim();
+    if (!nextName) {
+      setNotice("Le nom de l’étudiant est requis");
+      return;
+    }
+    if (nextName !== managingStudent && students.includes(nextName)) {
+      setNotice("Un étudiant porte déjà ce nom");
+      return;
+    }
+    const previousName = managingStudent;
+    setStudents((current) => current.map((student) => student === previousName ? nextName : student).sort((a, b) => a.localeCompare(b, "fr")));
+    setEntries((current) => current.map((entry) => entry.student === previousName ? { ...entry, student: nextName } : entry));
+    setForm((current) => ({ ...current, student: current.student === previousName ? nextName : current.student }));
+    setSelectedStudyStudent((current) => current === previousName ? nextName : current);
+    setManagingStudent(null);
+    setNotice("Profil étudiant modifié");
+  };
+
+  const deleteStudentProfile = () => {
+    if (!managingStudent) return;
+    const linkedCourses = entries.filter((entry) => entry.category === "Cours biblique" && entry.student === managingStudent).length;
+    const confirmed = window.confirm(`Supprimer le profil de ${managingStudent} ainsi que ses ${linkedCourses} cours et toutes les notes associées ? Cette action est irréversible.`);
+    if (!confirmed) return;
+    const deletedName = managingStudent;
+    setEntries((current) => current.filter((entry) => !(entry.category === "Cours biblique" && entry.student === deletedName)));
+    setStudents((current) => current.filter((student) => student !== deletedName));
+    setForm((current) => ({ ...current, student: current.student === deletedName ? "" : current.student }));
+    setSelectedStudyStudent((current) => current === deletedName ? "" : current);
+    setManagingStudent(null);
+    setNotice("Profil étudiant supprimé");
+  };
+
   const trackedTotal = pioneerType === "permanent" ? stats.total : stats.currentMonth;
   const activeTarget = pioneerType === "permanent" ? YEAR_TARGET : MONTH_TARGET;
   const progress = Math.min((trackedTotal / activeTarget) * 100, 100);
@@ -157,6 +198,8 @@ export default function Home() {
     .sort((a, b) => b.date.localeCompare(a.date));
   const studentCourseHours = studentCourses.reduce((total, entry) => total + entry.hours, 0);
   const latestProgressNote = studentCourses.find((entry) => entry.note)?.note;
+  const managedStudentCourses = managingStudent ? entries.filter((entry) => entry.category === "Cours biblique" && entry.student === managingStudent) : [];
+  const managedStudentHours = managedStudentCourses.reduce((total, entry) => total + entry.hours, 0);
 
   if (!ready) return <main className="loading">Préparation de votre suivi…</main>;
 
@@ -255,6 +298,7 @@ export default function Home() {
                 {form.student === "__new__" && <label>Nom du nouvel étudiant
                   <input value={form.newStudent} onChange={(e) => setForm({ ...form, newStudent: e.target.value })} placeholder="Prénom et nom" autoFocus required />
                 </label>}
+                {form.student && form.student !== "__new__" && <button type="button" className="manage-student" onClick={() => openStudentProfile(form.student)}>Gérer le profil de {form.student}</button>}
               </div>}
               <label>Durée en heures<input inputMode="decimal" placeholder="Ex. 2,5" value={form.hours} onChange={(e) => setForm({ ...form, hours: e.target.value })} required /></label>
               <label>{form.category === "Cours biblique" ? "Note sur ce cours (facultatif)" : "Note (facultatif)"}<textarea placeholder={form.category === "Cours biblique" ? "Ex. thème étudié, prochaine étape…" : "Ex. visite, activité…"} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} /></label>
@@ -299,11 +343,14 @@ export default function Home() {
                 {months.map((month, i) => <div key={month}><span>{month}</span><i><em style={{ width: `${Math.min((stats.monthly[i] / (pioneerType === "permanent" ? 50 : MONTH_TARGET)) * 100, 100)}%` }} /></i><b>{formatHours(stats.monthly[i])}</b></div>)}
               </div>
             </> : courseStudents.length ? <>
-              <label className="study-picker">Étudiant
-                <select value={activeStudyStudent} onChange={(e) => setSelectedStudyStudent(e.target.value)}>
-                  {courseStudents.map((student) => <option key={student} value={student}>{student}</option>)}
-                </select>
-              </label>
+              <div className="study-picker-row">
+                <label className="study-picker">Étudiant
+                  <select value={activeStudyStudent} onChange={(e) => setSelectedStudyStudent(e.target.value)}>
+                    {courseStudents.map((student) => <option key={student} value={student}>{student}</option>)}
+                  </select>
+                </label>
+                <button className="profile-button" onClick={() => openStudentProfile(activeStudyStudent)}>Profil</button>
+              </div>
               <div className="study-overview">
                 <div><small>Cours donnés</small><b>{studentCourses.length}</b></div>
                 <div><small>Heures</small><b>{formatHours(studentCourseHours)}</b></div>
@@ -327,6 +374,32 @@ export default function Home() {
           </section>
         )}
       </section>
+
+      {managingStudent && <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setManagingStudent(null); }}>
+        <section className="student-modal" role="dialog" aria-modal="true" aria-labelledby="student-profile-title">
+          <button className="modal-close" onClick={() => setManagingStudent(null)} aria-label="Fermer">×</button>
+          <p className="eyebrow">Profil étudiant</p>
+          <h2 id="student-profile-title">{managingStudent}</h2>
+          <div className="profile-stats">
+            <div><small>Cours enregistrés</small><b>{managedStudentCourses.length}</b></div>
+            <div><small>Total</small><b>{formatHours(managedStudentHours)}</b></div>
+          </div>
+          <label>Nom de l’étudiant
+            <input value={studentNameDraft} onChange={(e) => setStudentNameDraft(e.target.value)} />
+          </label>
+          <div className="modal-actions">
+            <button className="primary" onClick={saveStudentProfile}>Enregistrer les modifications</button>
+            {managedStudentCourses.length > 0 && <button className="secondary" onClick={() => {
+              setSelectedStudyStudent(managingStudent);
+              setProgressSection("cours");
+              setView("progression");
+              setManagingStudent(null);
+            }}>Voir son suivi complet</button>}
+            <button className="danger" onClick={deleteStudentProfile}>Supprimer le profil et son historique</button>
+          </div>
+          <p className="danger-note">La suppression effacera également tous les cours et toutes les notes associés à cet étudiant.</p>
+        </section>
+      </div>}
 
       <nav className="bottom-nav" aria-label="Navigation principale">
         <button className={view === "accueil" ? "active" : ""} onClick={() => setView("accueil")}><span>⌂</span>Accueil</button>
