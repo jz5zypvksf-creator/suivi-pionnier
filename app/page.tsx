@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 type Category = "Ministère" | "Cours biblique" | "Informel" | "Autre" | "Maison / jardin";
-type Entry = { id: string; date: string; category: Category; hours: number; note: string };
+type Entry = { id: string; date: string; category: Category; hours: number; note: string; student?: string };
 type View = "accueil" | "encoder" | "journal" | "progression";
 type PioneerType = "permanent" | "auxiliaire";
 
@@ -12,6 +12,7 @@ const WEEK_TARGET = 13;
 const MONTH_TARGET = 30;
 const STORAGE_KEY = "suivi-pionnier-entries-v1";
 const SETTINGS_KEY = "suivi-pionnier-settings-v1";
+const STUDENTS_KEY = "suivi-pionnier-students-v1";
 const categories: Category[] = ["Ministère", "Cours biblique", "Informel", "Autre", "Maison / jardin"];
 const months = ["Sep", "Oct", "Nov", "Déc", "Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août"];
 
@@ -45,12 +46,22 @@ export default function Home() {
   const [notice, setNotice] = useState("");
   const [selectedYear, setSelectedYear] = useState(serviceYearStart(new Date()));
   const [pioneerType, setPioneerType] = useState<PioneerType>("permanent");
-  const [form, setForm] = useState({ date: today(), category: "Ministère" as Category, hours: "2", note: "" });
+  const [students, setStudents] = useState<string[]>([]);
+  const [form, setForm] = useState({ date: today(), category: "Ministère" as Category, hours: "2", note: "", student: "", newStudent: "" });
 
   useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) setEntries(JSON.parse(saved));
+      if (saved) {
+        const savedEntries: Entry[] = JSON.parse(saved);
+        setEntries(savedEntries);
+        const entryStudents = savedEntries.flatMap((entry) => entry.student ? [entry.student] : []);
+        const savedStudents: string[] = JSON.parse(localStorage.getItem(STUDENTS_KEY) ?? "[]");
+        setStudents(Array.from(new Set([...savedStudents, ...entryStudents])).sort((a, b) => a.localeCompare(b, "fr")));
+      } else {
+        const savedStudents: string[] = JSON.parse(localStorage.getItem(STUDENTS_KEY) ?? "[]");
+        setStudents(savedStudents);
+      }
       const savedSettings = localStorage.getItem(SETTINGS_KEY);
       if (savedSettings) {
         const settings = JSON.parse(savedSettings);
@@ -70,6 +81,10 @@ export default function Home() {
     if (ready) localStorage.setItem(SETTINGS_KEY, JSON.stringify({ selectedYear, pioneerType }));
   }, [selectedYear, pioneerType, ready]);
 
+  useEffect(() => {
+    if (ready) localStorage.setItem(STUDENTS_KEY, JSON.stringify(students));
+  }, [students, ready]);
+
   const stats = useMemo(() => {
     const yearEntries = entries.filter((e) => serviceYearStart(e.date) === selectedYear);
     const ministry = yearEntries.filter((e) => e.category !== "Maison / jardin");
@@ -86,7 +101,8 @@ export default function Home() {
     );
     const todayIndex = serviceMonthIndex(today());
     const currentMonth = monthly[todayIndex];
-    return { total, maintenance, weekly, monthly, currentMonth, todayIndex, yearEntries };
+    const studentCount = new Set(yearEntries.filter((e) => e.category === "Cours biblique" && e.student).map((e) => e.student)).size;
+    return { total, maintenance, weekly, monthly, currentMonth, todayIndex, yearEntries, studentCount };
   }, [entries, selectedYear]);
 
   const addEntry = (category: Category, hours: number, note = "") => {
@@ -100,10 +116,25 @@ export default function Home() {
     event.preventDefault();
     const hours = Number(form.hours.replace(",", "."));
     if (!form.date || !Number.isFinite(hours) || hours <= 0) return;
-    setEntries((current) => [{ id: crypto.randomUUID(), date: form.date, category: form.category, hours, note: form.note.trim() }, ...current]);
-    setForm((current) => ({ ...current, hours: "", note: "" }));
+    let student: string | undefined;
+    if (form.category === "Cours biblique") {
+      student = form.student === "__new__" ? form.newStudent.trim() : form.student;
+      if (!student) {
+        setNotice("Choisissez ou ajoutez un étudiant");
+        return;
+      }
+      setStudents((current) => Array.from(new Set([...current, student!])).sort((a, b) => a.localeCompare(b, "fr")));
+    }
+    setEntries((current) => [{ id: crypto.randomUUID(), date: form.date, category: form.category, hours, note: form.note.trim(), student }, ...current]);
+    setSelectedYear(serviceYearStart(form.date));
+    setForm((current) => ({ ...current, hours: "", note: "", newStudent: "", student: student ?? "" }));
     setNotice("Activité enregistrée");
     setView("journal");
+  };
+
+  const prepareBibleStudy = () => {
+    setForm((current) => ({ ...current, date: today(), category: "Cours biblique", hours: "2,5", note: "", student: students[0] ?? "__new__", newStudent: "" }));
+    setView("encoder");
   };
 
   const trackedTotal = pioneerType === "permanent" ? stats.total : stats.currentMonth;
@@ -166,7 +197,7 @@ export default function Home() {
             <h2 className="quick-title">Ajouter rapidement</h2>
             <div className="quick-grid">
               <button onClick={() => addEntry("Ministère", 2)}><span>＋</span><b>2 h</b><small>Ministère</small></button>
-              <button onClick={() => addEntry("Cours biblique", 2.5)}><span>＋</span><b>2 h 30</b><small>Cours biblique</small></button>
+              <button onClick={prepareBibleStudy}><span>＋</span><b>2 h 30</b><small>Cours biblique</small></button>
               <button onClick={() => addEntry("Informel", 1)}><span>＋</span><b>1 h</b><small>Informel</small></button>
               <button className="maintenance" onClick={() => addEntry("Maison / jardin", 2)}><span>＋</span><b>2 h</b><small>Maison / jardin</small></button>
             </div>
@@ -188,9 +219,24 @@ export default function Home() {
             <h2>Encoder mes heures</h2>
             <form onSubmit={submit}>
               <label>Date<input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></label>
-              <label>Catégorie<select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value as Category })}>{categories.map((c) => <option key={c}>{c}</option>)}</select></label>
+              <label>Catégorie<select value={form.category} onChange={(e) => {
+                const category = e.target.value as Category;
+                setForm({ ...form, category, student: category === "Cours biblique" ? (form.student || students[0] || "__new__") : form.student });
+              }}>{categories.map((c) => <option key={c}>{c}</option>)}</select></label>
+              {form.category === "Cours biblique" && <div className="student-fields">
+                <label>Étudiant
+                  <select value={form.student} onChange={(e) => setForm({ ...form, student: e.target.value })} required>
+                    <option value="" disabled>Choisir un étudiant</option>
+                    {students.map((student) => <option key={student} value={student}>{student}</option>)}
+                    <option value="__new__">＋ Ajouter un nouvel étudiant</option>
+                  </select>
+                </label>
+                {form.student === "__new__" && <label>Nom du nouvel étudiant
+                  <input value={form.newStudent} onChange={(e) => setForm({ ...form, newStudent: e.target.value })} placeholder="Prénom et nom" autoFocus required />
+                </label>}
+              </div>}
               <label>Durée en heures<input inputMode="decimal" placeholder="Ex. 2,5" value={form.hours} onChange={(e) => setForm({ ...form, hours: e.target.value })} required /></label>
-              <label>Note (facultatif)<textarea placeholder="Ex. visite, étude…" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} /></label>
+              <label>{form.category === "Cours biblique" ? "Note sur ce cours (facultatif)" : "Note (facultatif)"}<textarea placeholder={form.category === "Cours biblique" ? "Ex. thème étudié, prochaine étape…" : "Ex. visite, activité…"} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} /></label>
               <button className="primary" type="submit">Enregistrer l’activité</button>
             </form>
           </section>
@@ -216,6 +262,7 @@ export default function Home() {
                 <div><small>Réalisé</small><b>{formatHours(stats.currentMonth)}</b></div>
                 <div><small>Objectif</small><b>{MONTH_TARGET} h</b></div>
               </>}
+              <div><small>Étudiants</small><b>{stats.studentCount}</b></div>
             </div>
             <div className="chart" aria-label="Heures de ministère par mois">
               {stats.monthly.map((value, i) => <div className="bar-col" key={months[i]}><span>{value || ""}</span><i style={{ height: `${Math.max((value / maxMonth) * 180, value ? 8 : 2)}px` }} /><small>{months[i]}</small></div>)}
@@ -242,7 +289,7 @@ function EntryList({ entries, onDelete, empty }: { entries: Entry[]; onDelete: (
   return <div className="entry-list">{entries.map((entry) => (
     <article key={entry.id}>
       <div className={`entry-icon ${entry.category === "Maison / jardin" ? "home" : ""}`}>{entry.category === "Cours biblique" ? "▤" : entry.category === "Maison / jardin" ? "⌂" : "○"}</div>
-      <div><h3>{entry.category}</h3><p>{new Date(`${entry.date}T12:00:00`).toLocaleDateString("fr-BE", { weekday: "short", day: "numeric", month: "short" })}{entry.note ? ` · ${entry.note}` : ""}</p></div>
+      <div><h3>{entry.category}{entry.student ? ` · ${entry.student}` : ""}</h3><p>{new Date(`${entry.date}T12:00:00`).toLocaleDateString("fr-BE", { weekday: "short", day: "numeric", month: "short" })}{entry.note ? ` · ${entry.note}` : ""}</p></div>
       <b>{formatHours(entry.hours)}</b>
       <button className="delete" aria-label={`Supprimer ${entry.category}`} onClick={() => onDelete(entry.id)}>×</button>
     </article>
